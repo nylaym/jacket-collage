@@ -391,7 +391,12 @@ async function api(pathOrUrl) {
     return api(pathOrUrl);
   }
   if (res.status === 401) { logout(); throw new Error('ログインが切れました。もう一度ログインしてください。'); }
-  if (res.status === 403) throw new Error('アクセスが拒否されました。Dashboardの「User Management」に自分のアカウントが登録されているか確認してください。');
+  if (res.status === 403) {
+    if (pathOrUrl.startsWith('/artists')) {
+      throw new Error('アーティスト情報の取得が拒否されました（403）。Development Modeアプリではこのエンドポイントが制限されている可能性があります。');
+    }
+    throw new Error('アクセスが拒否されました。Dashboardの「User Management」に自分のアカウントが登録されているか確認してください。');
+  }
   if (!res.ok) throw new Error(`Spotify APIエラー（${res.status}）`);
   return res.json();
 }
@@ -465,10 +470,13 @@ function updateSourceButtons() {
 }
 
 async function fetchArtists(ids) {
+  // 2026年2月のAPI変更でDevelopment Modeアプリは一括取得（GET /artists?ids=...）が
+  // 廃止されたため、1件ずつ GET /artists/{id} で取得する
   const out = [];
-  for (let i = 0; i < ids.length; i += 50) {
-    const data = await api(`/artists?ids=${ids.slice(i, i + 50).join(',')}`);
-    out.push(...(data.artists || []));
+  for (let i = 0; i < ids.length; i++) {
+    setStatus(`アーティスト写真を取得中…（${i + 1}/${ids.length}）`);
+    const artist = await api(`/artists/${ids[i]}`);
+    if (artist) out.push(artist);
   }
   return out;
 }
