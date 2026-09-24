@@ -207,6 +207,17 @@
     <div class="layout">
       <section class="controls">
         <div class="step">
+          <h2>比率</h2>
+          <div class="row" id="ratioList"></div>
+          <div class="row" id="qualityList"></div>
+          <div class="row">
+            <label>幅<input type="number" id="customWidthInput" placeholder="px" min="100"></label>
+            <label>高さ<input type="number" id="customHeightInput" placeholder="px" min="100"></label>
+          </div>
+          <label class="check"><input type="checkbox" id="lockRatioCheckbox" checked> 比率固定</label>
+        </div>
+
+        <div class="step">
           <h2>デザイン</h2>
           <div class="templates" id="templateList" role="radiogroup" aria-label="テンプレート"></div>
         </div>
@@ -238,7 +249,7 @@
       </section>
 
       <section class="stage">
-        <div class="sleeve"><canvas id="canvas" width="1080" height="1080" aria-label="コラージュのプレビュー"></canvas></div>
+        <div class="sleeve" id="sleeve"><canvas id="canvas" width="1080" height="1080" aria-label="コラージュのプレビュー"></canvas></div>
         <div class="actions row">
           <button id="downloadBtn" disabled>PNGを保存</button>
           <button id="shareBtn" class="ghost" disabled hidden>共有</button>
@@ -254,11 +265,18 @@
  * 設定レジストリ（将来の拡張ポイント）
  * ========================================================= */
 
-// 比率：今は1:1のみ。9:16や4:5はここに足してUIにセレクタを出すだけで対応できる
+// 比率追加はここに一行足すだけ（テンプレートのレイアウト計算は比率非依存）
 const RATIOS = {
-  '1:1': { w: 1080, h: 1080, label: '1:1 フィード' },
-  // '4:5':  { w: 1080, h: 1350, label: '4:5 フィード縦' },
-  // '9:16': { w: 1080, h: 1920, label: '9:16 ストーリーズ' },
+  '1:1': { w: 1080, h: 1080 },
+  '4:5': { w: 1080, h: 1350 },
+  '9:16': { w: 1080, h: 1920 },
+  '16:9': { w: 1920, h: 1080 },
+};
+
+const QUALITY = {
+  high: { scale: 2, tag: '最高' },
+  normal: { scale: 1, tag: 'ふつう' },
+  low: { scale: 0.5, tag: 'あらい' },
 };
 
 const SCOPES = 'playlist-read-private playlist-read-collaborative';
@@ -272,6 +290,10 @@ const FONT = '"Zen Kaku Gothic New", "Hiragino Sans", sans-serif';
  * ========================================================= */
 const state = {
   ratioId: '1:1',
+  quality: 'normal',
+  customWidth: null,
+  customHeight: null,
+  lockRatio: true,
   templateId: 'grid',
   gridSize: 'auto',
   gap: 0,
@@ -764,9 +786,27 @@ function autoGrid(count) {
   return Math.min(32, Math.max(2, Math.floor(Math.sqrt(count))));
 }
 
+function canvasSize() {
+  if (state.customWidth && state.customHeight) {
+    return { w: state.customWidth, h: state.customHeight };
+  }
+  const ratio = RATIOS[state.ratioId];
+  const scale = QUALITY[state.quality].scale;
+  return { w: Math.round(ratio.w * scale), h: Math.round(ratio.h * scale) };
+}
+
+function fitSleeve(W, H) {
+  const sleeve = $('sleeve');
+  sleeve.style.aspectRatio = `${W} / ${H}`;
+  const maxW = Math.min(720, sleeve.parentElement.clientWidth || 720);
+  const maxH = window.innerHeight * 0.78;
+  sleeve.style.width = `${Math.min(maxW, maxH * (W / H))}px`;
+}
+
 function render() {
-  const { w: W, h: H } = RATIOS[state.ratioId];
+  const { w: W, h: H } = canvasSize();
   canvas.width = W; canvas.height = H;
+  fitSleeve(W, H);
   const imgs = state.tiles.filter(t => t.selected && t.img).map(t => t.img);
   if (!imgs.length) { renderEmpty(W, H); return; }
   const n = state.gridSize === 'auto' ? autoGrid(imgs.length) : Number(state.gridSize);
@@ -1096,6 +1136,49 @@ function renderThumbnails() {
     : '';
 }
 
+function clearCustomSize() {
+  state.customWidth = null;
+  state.customHeight = null;
+  $('customWidthInput').value = '';
+  $('customHeightInput').value = '';
+}
+
+function renderRatioList() {
+  const list = $('ratioList');
+  list.innerHTML = '';
+  for (const id of Object.keys(RATIOS)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chip' + (id === state.ratioId ? ' active' : '');
+    btn.textContent = id;
+    btn.addEventListener('click', () => {
+      state.ratioId = id;
+      clearCustomSize();
+      renderRatioList();
+      render();
+    });
+    list.appendChild(btn);
+  }
+}
+
+function renderQualityList() {
+  const list = $('qualityList');
+  list.innerHTML = '';
+  for (const key of Object.keys(QUALITY)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chip' + (key === state.quality ? ' active' : '');
+    btn.textContent = QUALITY[key].tag;
+    btn.addEventListener('click', () => {
+      state.quality = key;
+      clearCustomSize();
+      renderQualityList();
+      render();
+    });
+    list.appendChild(btn);
+  }
+}
+
 function renderTemplates() {
   const list = $('templateList');
   list.innerHTML = '';
@@ -1126,6 +1209,31 @@ function bindUI() {
     render();
   });
   $('fillDirection').addEventListener('change', (e) => { state.fillDirection = e.target.value; render(); });
+  $('lockRatioCheckbox').addEventListener('change', (e) => { state.lockRatio = e.target.checked; });
+  $('customWidthInput').addEventListener('input', (e) => {
+    const refRatio = (state.customWidth && state.customHeight)
+      ? state.customWidth / state.customHeight
+      : RATIOS[state.ratioId].w / RATIOS[state.ratioId].h;
+    const w = Number(e.target.value) || null;
+    state.customWidth = w;
+    if (w && state.lockRatio) {
+      state.customHeight = Math.round(w / refRatio);
+      $('customHeightInput').value = state.customHeight;
+    }
+    render();
+  });
+  $('customHeightInput').addEventListener('input', (e) => {
+    const refRatio = (state.customWidth && state.customHeight)
+      ? state.customWidth / state.customHeight
+      : RATIOS[state.ratioId].w / RATIOS[state.ratioId].h;
+    const h = Number(e.target.value) || null;
+    state.customHeight = h;
+    if (h && state.lockRatio) {
+      state.customWidth = Math.round(h * refRatio);
+      $('customWidthInput').value = state.customWidth;
+    }
+    render();
+  });
   document.querySelectorAll('.chip[data-src]').forEach((btn) => {
     btn.addEventListener('click', () => setImageSource(btn.dataset.src).catch(err => setStatus(err.message, true)));
   });
@@ -1169,6 +1277,8 @@ function bindUI() {
 (async function init() {
   bindUI();
   populateGridSizeOptions();
+  renderRatioList();
+  renderQualityList();
   renderTemplates();
   try { await document.fonts.load(`900 40px ${FONT}`); await document.fonts.load(`500 40px ${FONT}`); } catch {}
   render();
