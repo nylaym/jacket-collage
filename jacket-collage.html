@@ -166,6 +166,10 @@
     <div class="step">
       <h2>曲を選ぶ</h2>
       <div class="row">
+        <button type="button" class="chip active" id="srcAlbumBtn" data-src="album">ジャケット</button>
+        <button type="button" class="chip" id="srcArtistBtn" data-src="artist">アーティスト写真</button>
+      </div>
+      <div class="row">
         <button type="button" class="chip" id="chipArtist" data-field="artist">アーティスト</button>
         <button type="button" class="chip" id="chipAlbum" data-field="albumName">アルバム</button>
         <button type="button" class="chip" id="chipAdded" data-field="addedAt">追加日</button>
@@ -283,6 +287,9 @@ const state = {
   fillDirection: 'row', // 'row' | 'col'（gridレイアウトのタイル埋め込み順）
   fieldFilters: { artist: new Set(), albumName: new Set(), addedAt: new Set() },
   originalOrder: [], // 読み込み直後の tile.key 順（「取得順」への復元用）
+  imageSource: 'album', // 'album' | 'artist'
+  tileSets: { album: null, artist: null }, // { tiles, originalOrder } / artistはトグル時に遅延取得
+  rawEntries: [], // アーティスト写真タイルを組み立てるための元データ
 };
 
 const FIELD_DEFS = {
@@ -408,6 +415,10 @@ function logout() {
   sel.innerHTML = '<option>ログインすると選べます</option>';
   sel.disabled = true;
   $('toDesignBtn').disabled = true;
+  state.imageSource = 'album';
+  state.tileSets = { album: null, artist: null };
+  state.rawEntries = [];
+  updateSourceButtons();
   showStep('select');
 }
 
@@ -440,6 +451,76 @@ async function loadUserAndPlaylists() {
   setStatus(`${state.playlists.length}件のプレイリストがあります。`);
 }
 
+function applyTileSet(tiles, originalOrder) {
+  state.tiles = tiles;
+  state.originalOrder = originalOrder;
+  resetSortAndLayout();
+  state.palette = computePalette(tiles);
+  $('randomCount').value = autoGrid(tiles.length) ** 2;
+}
+
+function updateSourceButtons() {
+  $('srcAlbumBtn').classList.toggle('active', state.imageSource === 'album');
+  $('srcArtistBtn').classList.toggle('active', state.imageSource === 'artist');
+}
+
+async function fetchArtists(ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const data = await api(`/artists?ids=${ids.slice(i, i + 50).join(',')}`);
+    out.push(...(data.artists || []));
+  }
+  return out;
+}
+
+async function buildArtistTileSet(entries) {
+  const firstSeen = new Map(); // artistId -> { name, addedAt }
+  for (const e of entries) {
+    const it = e.item || e.track;
+    if (!it) continue;
+    for (const a of it.artists || []) {
+      if (!firstSeen.has(a.id)) firstSeen.set(a.id, { name: a.name, addedAt: e.added_at || '' });
+    }
+  }
+  const ids = [...firstSeen.keys()];
+  setStatus(`アーティスト写真 ${ids.length}件を取得中…`);
+  const artists = await fetchArtists(ids);
+  const tiles = [];
+  for (const artist of artists) {
+    const img = artist.images?.[0];
+    if (!img) continue;
+    const meta = firstSeen.get(artist.id) || {};
+    tiles.push({
+      key: 'artist:' + artist.id, src: img.url, track: '', albumName: '', artist: artist.name,
+      addedAt: meta.addedAt || '', releaseDate: '', source: 'spotify-artist', selected: true, img: null,
+    });
+  }
+  await loadImages(tiles);
+  const ok = tiles.filter(t => t.img);
+  return { tiles: ok, originalOrder: ok.map(t => t.key) };
+}
+
+async function setImageSource(mode) {
+  if (mode === state.imageSource) return;
+  if (mode === 'artist' && !state.tileSets.artist) {
+    if (!state.rawEntries.length) return;
+    try {
+      state.tileSets.artist = await buildArtistTileSet(state.rawEntries);
+    } catch (err) {
+      setStatus(err.message, true);
+      return;
+    }
+  }
+  if (!state.tileSets[mode]) return;
+  state.imageSource = mode;
+  updateSourceButtons();
+  const set = state.tileSets[mode];
+  applyTileSet(set.tiles, set.originalOrder);
+  setStatus(mode === 'artist' ? `アーティスト写真 ${set.tiles.length}件` : `ジャケット ${set.tiles.length}枚`);
+  renderThumbnails();
+  render();
+}
+
 async function loadPlaylist(id) {
   const pl = state.playlists.find(p => p.id === id);
   setStatus('曲を読み込み中…');
@@ -468,18 +549,18 @@ async function loadPlaylist(id) {
   setStatus(`ジャケット ${tiles.length}枚を読み込み中…`);
   await loadImages(tiles);
   const ok = tiles.filter(t => t.img);
-  state.tiles = ok;
-  state.originalOrder = ok.map(t => t.key);
-  resetSortAndLayout();
+  state.rawEntries = entries;
+  state.tileSets = { album: { tiles: ok, originalOrder: ok.map(t => t.key) }, artist: null };
+  state.imageSource = 'album';
+  updateSourceButtons();
+  applyTileSet(ok, ok.map(t => t.key));
   state.title = pl?.name || '';
   state.sub = pl?.owner?.display_name ? `by ${pl.owner.display_name}` : '';
   $('titleInput').value = state.title;
   $('subInput').value = state.sub;
-  state.palette = computePalette(ok);
   const failed = tiles.length - ok.length;
   setStatus(`ジャケット ${ok.length}枚${failed ? `（${failed}枚は読み込めませんでした）` : ''}`);
   $('toDesignBtn').disabled = false;
-  $('randomCount').value = autoGrid(ok.length) ** 2;
   renderThumbnails();
   render();
 }
@@ -765,17 +846,35 @@ async function loadDemo() {
     });
   }
   await loadImages(tiles);
-  state.tiles = tiles;
-  state.originalOrder = tiles.map(t => t.key);
-  resetSortAndLayout();
+  const artistTiles = [];
+  for (let i = 0; i < 6; i++) {
+    const c = document.createElement('canvas'); c.width = c.height = 300;
+    const x = c.getContext('2d');
+    const h = (i * 60) % 360;
+    x.fillStyle = `hsl(${h} 60% 40%)`; x.fillRect(0, 0, 300, 300);
+    x.fillStyle = `hsl(${h} 70% 75%)`; x.beginPath(); x.arc(150, 120, 70, 0, Math.PI * 2); x.fill();
+    x.beginPath(); x.arc(150, 320, 130, 0, Math.PI * 2); x.fill();
+    artistTiles.push({
+      key: 'demo-artist' + i, src: c.toDataURL(), track: '', albumName: '',
+      artist: 'Artist ' + String.fromCharCode(65 + i), addedAt: '', releaseDate: '',
+      source: 'demo-artist', selected: true, img: null,
+    });
+  }
+  await loadImages(artistTiles);
+  state.rawEntries = [];
+  state.tileSets = {
+    album: { tiles, originalOrder: tiles.map(t => t.key) },
+    artist: { tiles: artistTiles, originalOrder: artistTiles.map(t => t.key) },
+  };
+  state.imageSource = 'album';
+  updateSourceButtons();
+  applyTileSet(tiles, tiles.map(t => t.key));
   state.title = 'サンプル・プレイリスト';
   state.sub = 'by you';
   $('titleInput').value = state.title;
   $('subInput').value = state.sub;
-  state.palette = computePalette(tiles);
   setStatus('サンプル画像を表示中です。');
   $('toDesignBtn').disabled = false;
-  $('randomCount').value = autoGrid(tiles.length) ** 2;
   renderThumbnails();
   render();
 }
@@ -1019,6 +1118,9 @@ function bindUI() {
     render();
   });
   $('fillDirection').addEventListener('change', (e) => { state.fillDirection = e.target.value; render(); });
+  document.querySelectorAll('.chip[data-src]').forEach((btn) => {
+    btn.addEventListener('click', () => setImageSource(btn.dataset.src).catch(err => setStatus(err.message, true)));
+  });
   document.querySelectorAll('.chip[data-field]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const field = btn.dataset.field;
