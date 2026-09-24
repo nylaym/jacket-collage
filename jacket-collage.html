@@ -66,6 +66,25 @@
   .tpl:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   .status { font-size: 13px; color: var(--muted); min-height: 1.6em; margin: 8px 0 0; }
   .status.error { color: var(--danger); }
+  .check { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 14px; margin-bottom: 0; }
+  .check input { width: auto; margin: 0; accent-color: var(--accent); }
+  .thumbs {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 6px;
+    max-height: 320px; overflow-y: auto; padding: 6px; margin-top: 10px;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  }
+  .thumb {
+    position: relative; aspect-ratio: 1 / 1; border-radius: 6px; overflow: hidden;
+    cursor: grab; border: 2px solid transparent; padding: 0; background: none;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb.off img { opacity: .3; filter: grayscale(1); }
+  .thumb.off::after {
+    content: "非表示"; position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; font-size: 10px; color: #fff; background: rgba(0, 0, 0, .35);
+  }
+  .thumb.dragging { opacity: .4; }
+  .thumb:hover, .thumb:focus-visible { border-color: var(--accent); }
   .stage { position: sticky; top: 20px; }
   .sleeve {
     width: 100%; max-width: 720px; aspect-ratio: 1 / 1; background: var(--surface);
@@ -113,6 +132,23 @@
     </div>
 
     <div class="step">
+      <h2>ジャケット</h2>
+      <label>並び順
+        <select id="sortSelect">
+          <option value="default">取得順</option>
+          <option value="artist">アーティスト順</option>
+          <option value="album">アルバム順</option>
+        </select>
+      </label>
+      <div class="row">
+        <button id="selectAllBtn" class="ghost" type="button">すべて表示</button>
+        <button id="selectNoneBtn" class="ghost" type="button">すべて非表示</button>
+      </div>
+      <div class="thumbs" id="thumbList" aria-label="ジャケット一覧"></div>
+      <p class="status" id="thumbCount"></p>
+    </div>
+
+    <div class="step">
       <h2>デザイン</h2>
       <div class="templates" id="templateList" role="radiogroup" aria-label="テンプレート"></div>
     </div>
@@ -122,14 +158,9 @@
       <label>並べる数
         <select id="gridSize">
           <option value="auto">自動</option>
-          <option value="2">2 × 2</option>
-          <option value="3">3 × 3</option>
-          <option value="4">4 × 4</option>
-          <option value="5">5 × 5</option>
-          <option value="6">6 × 6</option>
-          <option value="7">7 × 7</option>
         </select>
       </label>
+      <label class="check"><input type="checkbox" id="brickMode"> レンガ状敷き詰め</label>
       <label>すき間 <span id="gapValue">0</span>px
         <input type="range" id="gap" min="0" max="24" step="2" value="0">
       </label>
@@ -182,13 +213,17 @@ const state = {
   sub: '',
   me: null,
   playlists: [],
-  tiles: [], // { key, src, img, label, source: 'spotify' | 'custom' | 'demo', selected: true }
+  tiles: [], // { key, src, img, label, artist, source: 'spotify' | 'custom' | 'demo', selected: true }
   palette: null,
+  sortMode: 'default',
+  layoutMode: 'grid', // 'grid' | 'brick'
+  originalOrder: [], // 読み込み直後の tile.key 順（「Spotifyの順番」への復元用）
 };
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('canvas');
 const ctx = canvas.getContext('2d');
+let dragKey = null; // サムネイルのドラッグ＆ドロップ並び替え中に移動元のtile.keyを保持
 
 /* =========================================================
  * Spotify 認証（Authorization Code + PKCE、サーバー不要）
@@ -340,7 +375,8 @@ async function loadPlaylist(id) {
     const key = album?.id || it.id || images[0]?.url;
     if (!images.length || seen.has(key)) continue;
     seen.add(key);
-    tiles.push({ key, src: images[0].url, label: album?.name || it.name, source: 'spotify', selected: true, img: null });
+    const artist = it.artists?.map(a => a.name).join(', ') || '';
+    tiles.push({ key, src: images[0].url, label: album?.name || it.name, artist, source: 'spotify', selected: true, img: null });
   }
   if (!tiles.length) {
     setStatus('このプレイリストからはジャケットを取得できませんでした。曲が入っているか確認してください。', true);
@@ -350,6 +386,8 @@ async function loadPlaylist(id) {
   await loadImages(tiles);
   const ok = tiles.filter(t => t.img);
   state.tiles = ok;
+  state.originalOrder = ok.map(t => t.key);
+  resetSortAndLayout();
   state.title = pl?.name || '';
   state.sub = pl?.owner?.display_name ? `by ${pl.owner.display_name}` : '';
   $('titleInput').value = state.title;
@@ -357,6 +395,7 @@ async function loadPlaylist(id) {
   state.palette = computePalette(ok);
   const failed = tiles.length - ok.length;
   setStatus(`ジャケット ${ok.length}枚${failed ? `（${failed}枚は読み込めませんでした）` : ''}`);
+  renderThumbnails();
   render();
 }
 
@@ -426,6 +465,38 @@ function drawGrid(imgs, x, y, w, h, cols, gap) {
   }
 }
 
+// レンガ状（justified row）レイアウト：行ごとに列数を変え、渡された枚数ぴったりを
+// 過不足なく敷き詰める。画像は正方形カバーなので、行の高さは
+// 「理想セル一辺の合計が利用可能な高さに一致する」ようスケールして求める
+function drawBrick(imgs, x, y, w, h, gap) {
+  const n = imgs.length;
+  if (!n) return;
+  const rows = Math.max(1, Math.min(n, Math.round(Math.sqrt(n * (w / h)))));
+  const base = Math.floor(n / rows);
+  const remainder = n % rows;
+  const counts = Array.from({ length: rows }, (_, r) => base + (r < remainder ? 1 : 0));
+  const idealHeights = counts.map(c => (w - gap * (c - 1)) / c);
+  const totalIdeal = idealHeights.reduce((s, v) => s + v, 0);
+  const scale = (h - gap * (rows - 1)) / totalIdeal;
+  let idx = 0, oy = y;
+  for (let r = 0; r < rows; r++) {
+    const c = counts[r];
+    const rowH = idealHeights[r] * scale;
+    const cellW = (w - gap * (c - 1)) / c;
+    let ox = x;
+    for (let ci = 0; ci < c; ci++) {
+      drawCover(imgs[idx++], ox, oy, cellW, rowH);
+      ox += cellW + gap;
+    }
+    oy += rowH + gap;
+  }
+}
+
+function drawTiles(imgs, x, y, w, h, cols, gap, mode) {
+  if (mode === 'brick') drawBrick(imgs, x, y, w, h, gap);
+  else drawGrid(imgs, x, y, w, h, cols, gap);
+}
+
 function fitText(text, maxW, weight, size, minSize = size * 0.6) {
   let s = size;
   ctx.font = `${weight} ${s}px ${FONT}`;
@@ -466,7 +537,7 @@ const TEMPLATES = [
     render(W, H, t) {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
-      drawGrid(t.imgs, 0, 0, W, H, t.n, t.gap);
+      drawTiles(t.imgs, 0, 0, W, H, t.n, t.gap, t.layout);
     },
   },
   {
@@ -478,7 +549,7 @@ const TEMPLATES = [
       const pad = W * 0.07, bandH = H * 0.17;
       const S = H - pad - bandH;
       const x = (W - S) / 2;
-      drawGrid(t.imgs, x, pad, S, S, t.n, t.gap);
+      drawTiles(t.imgs, x, pad, S, S, t.n, t.gap, t.layout);
       const ty = pad + S + bandH * 0.42;
       ctx.fillStyle = fg; ctx.textBaseline = 'alphabetic';
       ctx.fillText(fitText(t.title, S * 0.78, 900, W * 0.052), x, ty);
@@ -506,7 +577,7 @@ const TEMPLATES = [
       ctx.fillText(fitText(t.sub, W - pad * 2, 500, W * 0.028), pad, titleBottom + W * 0.012);
       ctx.globalAlpha = 1;
       const gy = titleBottom + W * 0.075;
-      drawGrid(t.imgs, pad, gy, W - pad * 2, H - gy - pad, t.n + 1, Math.max(t.gap, 6));
+      drawTiles(t.imgs, pad, gy, W - pad * 2, H - gy - pad, t.n + 1, Math.max(t.gap, 6), t.layout);
       ctx.textBaseline = 'alphabetic';
     },
   },
@@ -516,7 +587,7 @@ const TEMPLATES = [
  * レンダリング
  * ========================================================= */
 function autoGrid(count) {
-  return Math.min(7, Math.max(2, Math.floor(Math.sqrt(count))));
+  return Math.min(16, Math.max(2, Math.floor(Math.sqrt(count))));
 }
 
 function render() {
@@ -530,10 +601,15 @@ function render() {
   tpl.render(W, H, {
     imgs, n, gap: state.gap * (W / 1080),
     title: state.title || 'Untitled', sub: state.sub, palette: state.palette || { base: [40, 44, 60] },
+    layout: state.layoutMode,
   });
   ctx.restore();
-  const shown = Math.min(imgs.length, n * n);
-  $('meta').textContent = `${imgs.length}枚中${shown}枚を使用${imgs.length < n * n ? '（足りない分は繰り返し）' : ''}・${W}×${H}px`;
+  if (state.layoutMode === 'brick') {
+    $('meta').textContent = `${imgs.length}枚・${W}×${H}px`;
+  } else {
+    const shown = Math.min(imgs.length, n * n);
+    $('meta').textContent = `${imgs.length}枚中${shown}枚を使用${imgs.length < n * n ? '（足りない分は繰り返し）' : ''}・${W}×${H}px`;
+  }
   $('downloadBtn').disabled = false;
   $('shareBtn').disabled = false;
 }
@@ -595,16 +671,20 @@ async function loadDemo() {
     if (i % 3 === 0) { x.beginPath(); x.arc(150, 150, 80 + (i % 4) * 10, 0, Math.PI * 2); x.fill(); }
     else if (i % 3 === 1) { x.fillRect(40, 190, 220, 30); x.fillRect(40, 235, 140, 18); }
     else { x.beginPath(); x.moveTo(40, 260); x.lineTo(150, 40); x.lineTo(260, 260); x.closePath(); x.fill(); }
-    tiles.push({ key: 'demo' + i, src: c.toDataURL(), label: 'Sample ' + (i + 1), source: 'demo', selected: true, img: null });
+    const artist = 'Artist ' + String.fromCharCode(65 + (i % 6));
+    tiles.push({ key: 'demo' + i, src: c.toDataURL(), label: 'Sample ' + (i + 1), artist, source: 'demo', selected: true, img: null });
   }
   await loadImages(tiles);
   state.tiles = tiles;
+  state.originalOrder = tiles.map(t => t.key);
+  resetSortAndLayout();
   state.title = 'サンプル・プレイリスト';
   state.sub = 'by you';
   $('titleInput').value = state.title;
   $('subInput').value = state.sub;
   state.palette = computePalette(tiles);
   setStatus('サンプル画像を表示中です。');
+  renderThumbnails();
   render();
 }
 
@@ -622,6 +702,67 @@ function renderAuth() {
   $('authForm').hidden = loggedIn;
   $('userBox').hidden = !loggedIn;
   $('userName').textContent = state.me ? `${state.me.display_name || state.me.id} でログイン中` : 'ログイン中';
+}
+
+function populateGridSizeOptions() {
+  const sel = $('gridSize');
+  for (let i = 2; i <= 16; i++) {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = `${i} × ${i}`;
+    sel.appendChild(opt);
+  }
+}
+
+function resetSortAndLayout() {
+  state.sortMode = 'default';
+  state.layoutMode = 'grid';
+  $('sortSelect').value = 'default';
+  $('brickMode').checked = false;
+  $('gridSize').disabled = false;
+}
+
+function applySort() {
+  const collator = new Intl.Collator('ja');
+  if (state.sortMode === 'artist') {
+    state.tiles.sort((a, b) => collator.compare(a.artist || '', b.artist || ''));
+  } else if (state.sortMode === 'album') {
+    state.tiles.sort((a, b) => collator.compare(a.label || '', b.label || ''));
+  } else {
+    const order = state.originalOrder;
+    state.tiles.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+  }
+}
+
+function renderThumbnails() {
+  const list = $('thumbList');
+  list.innerHTML = '';
+  for (const t of state.tiles) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'thumb' + (t.selected ? '' : ' off');
+    el.draggable = true;
+    el.title = [t.label, t.artist].filter(Boolean).join(' / ');
+    el.innerHTML = `<img src="${t.src}" alt="${t.label || ''}" loading="lazy">`;
+    el.addEventListener('click', () => { t.selected = !t.selected; renderThumbnails(); render(); });
+    el.addEventListener('dragstart', () => { dragKey = t.key; el.classList.add('dragging'); });
+    el.addEventListener('dragend', () => { el.classList.remove('dragging'); dragKey = null; });
+    el.addEventListener('dragover', (e) => e.preventDefault());
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!dragKey || dragKey === t.key) return;
+      const from = state.tiles.findIndex(x => x.key === dragKey);
+      const to = state.tiles.findIndex(x => x.key === t.key);
+      if (from < 0 || to < 0) return;
+      const [moved] = state.tiles.splice(from, 1);
+      state.tiles.splice(to, 0, moved);
+      renderThumbnails();
+      render();
+    });
+    list.appendChild(el);
+  }
+  const shown = state.tiles.filter(t => t.selected).length;
+  $('thumbCount').textContent = state.tiles.length ? `${shown} / ${state.tiles.length}枚` : '';
 }
 
 function renderTemplates() {
@@ -648,6 +789,19 @@ function bindUI() {
   });
   $('gridSize').addEventListener('change', (e) => { state.gridSize = e.target.value; render(); });
   $('gap').addEventListener('input', (e) => { state.gap = Number(e.target.value); $('gapValue').textContent = e.target.value; render(); });
+  $('brickMode').addEventListener('change', (e) => {
+    state.layoutMode = e.target.checked ? 'brick' : 'grid';
+    $('gridSize').disabled = e.target.checked;
+    render();
+  });
+  $('sortSelect').addEventListener('change', (e) => {
+    state.sortMode = e.target.value;
+    applySort();
+    renderThumbnails();
+    render();
+  });
+  $('selectAllBtn').addEventListener('click', () => { state.tiles.forEach(t => t.selected = true); renderThumbnails(); render(); });
+  $('selectNoneBtn').addEventListener('click', () => { state.tiles.forEach(t => t.selected = false); renderThumbnails(); render(); });
   $('titleInput').addEventListener('input', (e) => { state.title = e.target.value; render(); });
   $('subInput').addEventListener('input', (e) => { state.sub = e.target.value; render(); });
   $('downloadBtn').addEventListener('click', download);
@@ -659,6 +813,7 @@ function bindUI() {
 
 (async function init() {
   bindUI();
+  populateGridSizeOptions();
   renderTemplates();
   try { await document.fonts.load(`900 40px ${FONT}`); await document.fonts.load(`500 40px ${FONT}`); } catch {}
   render();
