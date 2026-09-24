@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ジャケットコラージュ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #ECEEE8;
+    --surface: #F7F8F4;
+    --ink: #1D2230;
+    --muted: #5E6674;
+    --line: #CFD3C9;
+    --accent: #2A45E8;
+    --accent-ink: #FFFFFF;
+    --danger: #B3261E;
+    --font: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #171A22; --surface: #20242E; --ink: #E8EAF0; --muted: #9AA1AE;
+      --line: #343A47; --accent: #7D8DFF; --accent-ink: #10131A; --danger: #FF8A80;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--paper); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.6; }
+  header { padding: 28px clamp(16px, 4vw, 48px) 8px; }
+  h1 { font-size: clamp(28px, 5vw, 44px); font-weight: 900; letter-spacing: -0.02em; line-height: 1.1; margin: 0; }
+  header p { margin: 6px 0 0; color: var(--muted); }
+  .layout {
+    display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: clamp(16px, 3vw, 40px);
+    padding: 20px clamp(16px, 4vw, 48px) 48px; align-items: start;
+  }
+  @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } .stage { order: -1; } }
+  .controls { display: flex; flex-direction: column; gap: 28px; }
+  .step h2 { font-size: 16px; font-weight: 700; margin: 0 0 10px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  input[type=text], select {
+    display: block; width: 100%; margin-top: 4px; padding: 10px 12px; font: inherit; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  button {
+    font: inherit; font-weight: 700; padding: 10px 16px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+  }
+  button.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .hint { font-size: 12px; color: var(--muted); margin: 8px 0 12px; word-break: break-all; }
+  code { font-size: 12px; background: var(--surface); padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); }
+  .user { font-size: 14px; }
+  .templates { display: grid; gap: 8px; }
+  .tpl {
+    display: flex; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 10px; background: var(--surface); cursor: pointer; color: var(--ink); margin: 0;
+  }
+  .tpl input { accent-color: var(--accent); margin: 0; }
+  .tpl strong { display: block; font-size: 14px; }
+  .tpl span { font-size: 12px; color: var(--muted); }
+  .tpl:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .status { font-size: 13px; color: var(--muted); min-height: 1.6em; margin: 8px 0 0; }
+  .status.error { color: var(--danger); }
+  .stage { position: sticky; top: 20px; }
+  .sleeve {
+    width: 100%; max-width: 720px; aspect-ratio: 1 / 1; background: var(--surface);
+    border-radius: 4px; box-shadow: 0 1px 0 var(--line), 0 24px 48px -24px rgba(20, 24, 40, .45);
+    overflow: hidden;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  .actions { margin-top: 16px; }
+  .meta { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+  @media (prefers-reduced-motion: no-preference) { .sleeve { transition: box-shadow .2s; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>ジャケットコラージュ</h1>
+  <p>自分のSpotifyプレイリストのジャケットを、SNS用の1枚にまとめます。</p>
+</header>
+
+<main class="layout">
+  <section class="controls">
+    <div class="step">
+      <h2>Spotifyと接続</h2>
+      <div id="authForm">
+        <label>Client ID
+          <input type="text" id="clientId" autocomplete="off" spellcheck="false" placeholder="Developer Dashboardのアプリ設定からコピー">
+        </label>
+        <p class="hint">Redirect URIに <code id="redirectUri"></code> を登録してください。</p>
+        <div class="row">
+          <button id="loginBtn">Spotifyでログイン</button>
+          <button id="demoBtn" class="ghost">サンプルで試す</button>
+        </div>
+      </div>
+      <div id="userBox" class="row" hidden>
+        <span class="user" id="userName"></span>
+        <button id="logoutBtn" class="ghost">ログアウト</button>
+      </div>
+    </div>
+
+    <div class="step">
+      <h2>プレイリスト</h2>
+      <select id="playlistSelect" disabled aria-label="プレイリスト">
+        <option>ログインすると選べます</option>
+      </select>
+      <p class="status" id="status" role="status"></p>
+    </div>
+
+    <div class="step">
+      <h2>デザイン</h2>
+      <div class="templates" id="templateList" role="radiogroup" aria-label="テンプレート"></div>
+    </div>
+
+    <div class="step">
+      <h2>調整</h2>
+      <label>並べる数
+        <select id="gridSize">
+          <option value="auto">自動</option>
+          <option value="2">2 × 2</option>
+          <option value="3">3 × 3</option>
+          <option value="4">4 × 4</option>
+          <option value="5">5 × 5</option>
+          <option value="6">6 × 6</option>
+          <option value="7">7 × 7</option>
+        </select>
+      </label>
+      <label>すき間 <span id="gapValue">0</span>px
+        <input type="range" id="gap" min="0" max="24" step="2" value="0">
+      </label>
+      <label>タイトル
+        <input type="text" id="titleInput" placeholder="プレイリスト名">
+      </label>
+      <label>サブテキスト
+        <input type="text" id="subInput" placeholder="作成者名など">
+      </label>
+    </div>
+  </section>
+
+  <section class="stage">
+    <div class="sleeve"><canvas id="canvas" width="1080" height="1080" aria-label="コラージュのプレビュー"></canvas></div>
+    <div class="actions row">
+      <button id="downloadBtn" disabled>PNGを保存</button>
+      <button id="shareBtn" class="ghost" disabled hidden>共有</button>
+    </div>
+    <p class="meta" id="meta"></p>
+  </section>
+</main>
+
+<script>
+/* =========================================================
+ * 設定レジストリ（将来の拡張ポイント）
+ * ========================================================= */
+
+// 比率：今は1:1のみ。9:16や4:5はここに足してUIにセレクタを出すだけで対応できる
+const RATIOS = {
+  '1:1': { w: 1080, h: 1080, label: '1:1 フィード' },
+  // '4:5':  { w: 1080, h: 1350, label: '4:5 フィード縦' },
+  // '9:16': { w: 1080, h: 1920, label: '9:16 ストーリーズ' },
+};
+
+const SCOPES = 'playlist-read-private playlist-read-collaborative';
+const API = 'https://api.spotify.com/v1';
+const FONT = '"Zen Kaku Gothic New", "Hiragino Sans", sans-serif';
+
+/* =========================================================
+ * 状態
+ * tiles は「並べる素材」の統一形式。source で出どころを区別し、
+ * selected で表示対象を切り替える（画像選択機能・任意画像追加の土台）
+ * ========================================================= */
+const state = {
+  ratioId: '1:1',
+  templateId: 'grid',
+  gridSize: 'auto',
+  gap: 0,
+  title: '',
+  sub: '',
+  me: null,
+  playlists: [],
+  tiles: [], // { key, src, img, label, source: 'spotify' | 'custom' | 'demo', selected: true }
+  palette: null,
+};
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('canvas');
+const ctx = canvas.getContext('2d');
+
+/* =========================================================
+ * Spotify 認証（Authorization Code + PKCE、サーバー不要）
+ * ========================================================= */
+const redirectUri = () => location.origin + location.pathname;
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+
+function b64url(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function randomString(len) {
+  const a = new Uint8Array(len); crypto.getRandomValues(a);
+  return b64url(a.buffer).slice(0, len);
+}
+
+async function login() {
+  const clientId = $('clientId').value.trim();
+  if (!clientId) { setStatus('Client IDを入力してください。', true); return; }
+  store.set('clientId', clientId);
+  const verifier = randomString(64);
+  const oauthState = randomString(16);
+  store.set('pkce', { verifier, state: oauthState });
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  const params = new URLSearchParams({
+    response_type: 'code', client_id: clientId, scope: SCOPES,
+    code_challenge_method: 'S256', code_challenge: challenge,
+    redirect_uri: redirectUri(), state: oauthState,
+  });
+  location.href = 'https://accounts.spotify.com/authorize?' + params;
+}
+
+async function tokenRequest(body) {
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.error || 'トークン取得に失敗しました');
+  const prev = store.get('token') || {};
+  const token = {
+    access: data.access_token,
+    refresh: data.refresh_token || prev.refresh,
+    expires: Date.now() + (data.expires_in - 60) * 1000,
+  };
+  store.set('token', token);
+  return token;
+}
+
+async function handleCallback() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has('code') && !q.has('error')) return;
+  history.replaceState(null, '', redirectUri());
+  if (q.get('error')) { setStatus('ログインがキャンセルされました。', true); return; }
+  const pkce = store.get('pkce');
+  store.del('pkce');
+  if (!pkce || pkce.state !== q.get('state')) { setStatus('ログイン情報が一致しません。もう一度ログインしてください。', true); return; }
+  await tokenRequest({
+    client_id: store.get('clientId'), grant_type: 'authorization_code',
+    code: q.get('code'), redirect_uri: redirectUri(), code_verifier: pkce.verifier,
+  });
+}
+
+async function getAccessToken() {
+  let t = store.get('token');
+  if (!t) return null;
+  if (Date.now() > t.expires) {
+    if (!t.refresh) return null;
+    t = await tokenRequest({ client_id: store.get('clientId'), grant_type: 'refresh_token', refresh_token: t.refresh });
+  }
+  return t.access;
+}
+
+async function api(pathOrUrl) {
+  const token = await getAccessToken();
+  if (!token) throw new Error('ログインが切れました。もう一度ログインしてください。');
+  const url = pathOrUrl.startsWith('http') ? pathOrUrl : API + pathOrUrl;
+  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+  if (res.status === 429) {
+    const wait = Number(res.headers.get('Retry-After') || 2);
+    await new Promise(r => setTimeout(r, wait * 1000));
+    return api(pathOrUrl);
+  }
+  if (res.status === 401) { logout(); throw new Error('ログインが切れました。もう一度ログインしてください。'); }
+  if (res.status === 403) throw new Error('アクセスが拒否されました。Dashboardの「User Management」に自分のアカウントが登録されているか確認してください。');
+  if (!res.ok) throw new Error(`Spotify APIエラー（${res.status}）`);
+  return res.json();
+}
+
+async function apiAll(path) {
+  const out = [];
+  let next = path;
+  while (next) {
+    const page = await api(next);
+    out.push(...(page.items || []));
+    next = page.next;
+  }
+  return out;
+}
+
+function logout() {
+  store.del('token');
+  state.me = null; state.playlists = [];
+  renderAuth();
+  const sel = $('playlistSelect');
+  sel.innerHTML = '<option>ログインすると選べます</option>';
+  sel.disabled = true;
+}
+
+/* =========================================================
+ * データ取得
+ * ========================================================= */
+async function loadUserAndPlaylists() {
+  setStatus('プレイリストを読み込み中…');
+  state.me = await api('/me');
+  renderAuth();
+  state.playlists = await apiAll('/me/playlists?limit=50');
+  const sel = $('playlistSelect');
+  sel.innerHTML = '<option value="">選んでください</option>';
+  for (const pl of state.playlists) {
+    if (!pl) continue;
+    const own = pl.owner?.id === state.me.id || pl.collaborative;
+    const opt = document.createElement('option');
+    opt.value = pl.id;
+    opt.textContent = own ? pl.name : `${pl.name}（他のユーザーのため取得不可）`;
+    opt.disabled = !own;
+    sel.appendChild(opt);
+  }
+  sel.disabled = false;
+  setStatus(`${state.playlists.length}件のプレイリストがあります。`);
+}
+
+async function loadPlaylist(id) {
+  const pl = state.playlists.find(p => p.id === id);
+  setStatus('曲を読み込み中…');
+  const entries = await apiAll(`/playlists/${id}/items?limit=50&additional_types=track,episode`);
+  const seen = new Set();
+  const tiles = [];
+  for (const e of entries) {
+    const it = e.item || e.track; // 2026年2月の変更で item に。移行期間中は track も返る
+    if (!it) continue;
+    const album = it.album;
+    const images = album?.images || it.images || it.show?.images || [];
+    const key = album?.id || it.id || images[0]?.url;
+    if (!images.length || seen.has(key)) continue;
+    seen.add(key);
+    tiles.push({ key, src: images[0].url, label: album?.name || it.name, source: 'spotify', selected: true, img: null });
+  }
+  if (!tiles.length) {
+    setStatus('このプレイリストからはジャケットを取得できませんでした。曲が入っているか確認してください。', true);
+    return;
+  }
+  setStatus(`ジャケット ${tiles.length}枚を読み込み中…`);
+  await loadImages(tiles);
+  const ok = tiles.filter(t => t.img);
+  state.tiles = ok;
+  state.title = pl?.name || '';
+  state.sub = pl?.owner?.display_name ? `by ${pl.owner.display_name}` : '';
+  $('titleInput').value = state.title;
+  $('subInput').value = state.sub;
+  state.palette = computePalette(ok);
+  const failed = tiles.length - ok.length;
+  setStatus(`ジャケット ${ok.length}枚${failed ? `（${failed}枚は読み込めませんでした）` : ''}`);
+  render();
+}
+
+function loadImage(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+async function loadImages(tiles, concurrency = 8) {
+  let i = 0;
+  const worker = async () => {
+    while (i < tiles.length) {
+      const t = tiles[i++];
+      t.img = await loadImage(t.src);
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, worker));
+}
+
+/* =========================================================
+ * 色の抽出（テンプレートの背景色に使う）
+ * ========================================================= */
+function computePalette(tiles) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 8;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  let r = 0, g = 0, b = 0, n = 0;
+  for (const t of tiles.slice(0, 25)) {
+    try {
+      cx.drawImage(t.img, 0, 0, 8, 8);
+      const d = cx.getImageData(0, 0, 8, 8).data;
+      for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+    } catch { /* CORSで読めない画像は無視 */ }
+  }
+  if (!n) return { base: [40, 44, 60] };
+  return { base: [r / n, g / n, b / n].map(Math.round) };
+}
+const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
+const luminance = (c) => (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
+
+/* =========================================================
+ * 描画ヘルパー
+ * ========================================================= */
+function drawCover(img, x, y, w, h) {
+  // 正方形でない画像（将来の任意画像）も中央で合わせる
+  const s = Math.max(w / img.width, h / img.height);
+  const sw = w / s, sh = h / s;
+  ctx.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, x, y, w, h);
+}
+
+function drawGrid(imgs, x, y, w, h, cols, gap) {
+  const cell = (w - gap * (cols - 1)) / cols;
+  const rows = Math.max(1, Math.floor((h + gap) / (cell + gap)));
+  const usedH = rows * cell + (rows - 1) * gap;
+  const oy = y + (h - usedH) / 2;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const img = imgs[(r * cols + c) % imgs.length];
+      drawCover(img, x + c * (cell + gap), oy + r * (cell + gap), cell, cell);
+    }
+  }
+}
+
+function fitText(text, maxW, weight, size, minSize = size * 0.6) {
+  let s = size;
+  ctx.font = `${weight} ${s}px ${FONT}`;
+  while (ctx.measureText(text).width > maxW && s > minSize) {
+    s -= 2; ctx.font = `${weight} ${s}px ${FONT}`;
+  }
+  let t = text;
+  while (ctx.measureText(t).width > maxW && t.length > 1) t = t.slice(0, -1);
+  return t === text ? t : t.slice(0, -1) + '…';
+}
+
+function wrapLines(text, maxW, maxLines) {
+  const lines = [];
+  let line = '';
+  for (const ch of text) {
+    if (ctx.measureText(line + ch).width > maxW && line) {
+      lines.push(line); line = ch;
+      if (lines.length === maxLines) break;
+    } else line += ch;
+  }
+  if (lines.length < maxLines && line) lines.push(line);
+  const used = lines.join('').length;
+  if (used < [...text].length && lines.length) {
+    let last = lines[lines.length - 1];
+    while (ctx.measureText(last + '…').width > maxW && last.length) last = last.slice(0, -1);
+    lines[lines.length - 1] = last + '…';
+  }
+  return lines;
+}
+
+/* =========================================================
+ * テンプレート（ここに足していけば一覧に自動で出る）
+ * render(W, H, t) の t: { imgs, n, gap, title, sub, palette }
+ * ========================================================= */
+const TEMPLATES = [
+  {
+    id: 'grid', name: 'フルグリッド', desc: 'ジャケットだけを全面に敷き詰める',
+    render(W, H, t) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      drawGrid(t.imgs, 0, 0, W, H, t.n, t.gap);
+    },
+  },
+  {
+    id: 'band', name: 'タイトル帯', desc: 'ジャケットの色を背景に、下にタイトル',
+    render(W, H, t) {
+      const bg = mix(t.palette.base, [10, 10, 16], 0.35);
+      const fg = luminance(bg) > 0.55 ? '#14161C' : '#FFFFFF';
+      ctx.fillStyle = rgb(bg); ctx.fillRect(0, 0, W, H);
+      const pad = W * 0.07, bandH = H * 0.17;
+      const S = H - pad - bandH;
+      const x = (W - S) / 2;
+      drawGrid(t.imgs, x, pad, S, S, t.n, t.gap);
+      const ty = pad + S + bandH * 0.42;
+      ctx.fillStyle = fg; ctx.textBaseline = 'alphabetic';
+      ctx.fillText(fitText(t.title, S * 0.78, 900, W * 0.052), x, ty);
+      ctx.globalAlpha = 0.72;
+      ctx.fillText(fitText(t.sub, S * 0.78, 500, W * 0.026), x, ty + W * 0.045);
+      ctx.textAlign = 'right';
+      ctx.fillText(fitText('Listen on Spotify', S * 0.25, 500, W * 0.022), x + S, ty + W * 0.045);
+      ctx.textAlign = 'left'; ctx.globalAlpha = 1;
+    },
+  },
+  {
+    id: 'poster', name: 'ポスター', desc: '大きなタイトルを上に置く',
+    render(W, H, t) {
+      const bg = mix(t.palette.base, [246, 244, 238], 0.86);
+      const fg = mix(t.palette.base, [12, 12, 18], 0.75);
+      ctx.fillStyle = rgb(bg); ctx.fillRect(0, 0, W, H);
+      const pad = W * 0.07;
+      const size = W * 0.088;
+      ctx.font = `900 ${size}px ${FONT}`;
+      ctx.fillStyle = rgb(fg); ctx.textBaseline = 'top';
+      const lines = wrapLines(t.title, W - pad * 2, 2);
+      lines.forEach((l, i) => ctx.fillText(l, pad, pad + i * size * 1.12));
+      const titleBottom = pad + lines.length * size * 1.12;
+      ctx.globalAlpha = 0.7;
+      ctx.fillText(fitText(t.sub, W - pad * 2, 500, W * 0.028), pad, titleBottom + W * 0.012);
+      ctx.globalAlpha = 1;
+      const gy = titleBottom + W * 0.075;
+      drawGrid(t.imgs, pad, gy, W - pad * 2, H - gy - pad, t.n + 1, Math.max(t.gap, 6));
+      ctx.textBaseline = 'alphabetic';
+    },
+  },
+];
+
+/* =========================================================
+ * レンダリング
+ * ========================================================= */
+function autoGrid(count) {
+  return Math.min(7, Math.max(2, Math.floor(Math.sqrt(count))));
+}
+
+function render() {
+  const { w: W, h: H } = RATIOS[state.ratioId];
+  canvas.width = W; canvas.height = H;
+  const imgs = state.tiles.filter(t => t.selected && t.img).map(t => t.img);
+  if (!imgs.length) { renderEmpty(W, H); return; }
+  const n = state.gridSize === 'auto' ? autoGrid(imgs.length) : Number(state.gridSize);
+  const tpl = TEMPLATES.find(t => t.id === state.templateId) || TEMPLATES[0];
+  ctx.save();
+  tpl.render(W, H, {
+    imgs, n, gap: state.gap * (W / 1080),
+    title: state.title || 'Untitled', sub: state.sub, palette: state.palette || { base: [40, 44, 60] },
+  });
+  ctx.restore();
+  const shown = Math.min(imgs.length, n * n);
+  $('meta').textContent = `${imgs.length}枚中${shown}枚を使用${imgs.length < n * n ? '（足りない分は繰り返し）' : ''}・${W}×${H}px`;
+  $('downloadBtn').disabled = false;
+  $('shareBtn').disabled = false;
+}
+
+function renderEmpty(W, H) {
+  const cs = getComputedStyle(document.documentElement);
+  ctx.fillStyle = cs.getPropertyValue('--surface').trim() || '#F7F8F4';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = cs.getPropertyValue('--muted').trim() || '#5E6674';
+  ctx.font = `500 ${W * 0.032}px ${FONT}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('プレイリストを選ぶと、ここにプレビューが出ます', W / 2, H / 2);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  $('meta').textContent = '';
+  $('downloadBtn').disabled = true;
+  $('shareBtn').disabled = true;
+}
+
+/* =========================================================
+ * 書き出し
+ * ========================================================= */
+function fileName() {
+  return (state.title || 'collage').replace(/[\\/:*?"<>|]/g, '_') + '.png';
+}
+function toBlob() { return new Promise(r => canvas.toBlob(r, 'image/png')); }
+
+async function download() {
+  try {
+    const blob = await toBlob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName();
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch {
+    setStatus('画像を書き出せませんでした。ジャケット画像の読み込み元が制限されている可能性があります。', true);
+  }
+}
+
+async function share() {
+  const file = new File([await toBlob()], fileName(), { type: 'image/png' });
+  try { await navigator.share({ files: [file], title: state.title }); } catch { /* キャンセル */ }
+}
+
+/* =========================================================
+ * サンプル（ログインなしでテンプレートを試す用）
+ * ========================================================= */
+async function loadDemo() {
+  const hues = [8, 32, 50, 140, 175, 200, 222, 258, 285, 320, 350, 95, 18, 240, 190, 300];
+  const tiles = [];
+  for (let i = 0; i < hues.length; i++) {
+    const c = document.createElement('canvas'); c.width = c.height = 300;
+    const x = c.getContext('2d');
+    const h = hues[i];
+    const g = x.createLinearGradient(0, 0, 300, 300);
+    g.addColorStop(0, `hsl(${h} 70% 55%)`); g.addColorStop(1, `hsl(${(h + 40) % 360} 60% 25%)`);
+    x.fillStyle = g; x.fillRect(0, 0, 300, 300);
+    x.fillStyle = `hsl(${(h + 180) % 360} 80% 85% / .85)`;
+    if (i % 3 === 0) { x.beginPath(); x.arc(150, 150, 80 + (i % 4) * 10, 0, Math.PI * 2); x.fill(); }
+    else if (i % 3 === 1) { x.fillRect(40, 190, 220, 30); x.fillRect(40, 235, 140, 18); }
+    else { x.beginPath(); x.moveTo(40, 260); x.lineTo(150, 40); x.lineTo(260, 260); x.closePath(); x.fill(); }
+    tiles.push({ key: 'demo' + i, src: c.toDataURL(), label: 'Sample ' + (i + 1), source: 'demo', selected: true, img: null });
+  }
+  await loadImages(tiles);
+  state.tiles = tiles;
+  state.title = 'サンプル・プレイリスト';
+  state.sub = 'by you';
+  $('titleInput').value = state.title;
+  $('subInput').value = state.sub;
+  state.palette = computePalette(tiles);
+  setStatus('サンプル画像を表示中です。');
+  render();
+}
+
+/* =========================================================
+ * UI
+ * ========================================================= */
+function setStatus(msg, isError = false) {
+  const el = $('status');
+  el.textContent = msg;
+  el.classList.toggle('error', isError);
+}
+
+function renderAuth() {
+  const loggedIn = !!store.get('token');
+  $('authForm').hidden = loggedIn;
+  $('userBox').hidden = !loggedIn;
+  $('userName').textContent = state.me ? `${state.me.display_name || state.me.id} でログイン中` : 'ログイン中';
+}
+
+function renderTemplates() {
+  const list = $('templateList');
+  list.innerHTML = '';
+  for (const t of TEMPLATES) {
+    const label = document.createElement('label');
+    label.className = 'tpl';
+    label.innerHTML = `<input type="radio" name="tpl" value="${t.id}" ${t.id === state.templateId ? 'checked' : ''}>
+      <div><strong>${t.name}</strong><span>${t.desc}</span></div>`;
+    label.querySelector('input').addEventListener('change', () => { state.templateId = t.id; render(); });
+    list.appendChild(label);
+  }
+}
+
+function bindUI() {
+  $('redirectUri').textContent = redirectUri();
+  $('clientId').value = store.get('clientId') || '';
+  $('loginBtn').addEventListener('click', login);
+  $('demoBtn').addEventListener('click', loadDemo);
+  $('logoutBtn').addEventListener('click', () => { logout(); setStatus('ログアウトしました。'); });
+  $('playlistSelect').addEventListener('change', (e) => {
+    if (e.target.value) loadPlaylist(e.target.value).catch(err => setStatus(err.message, true));
+  });
+  $('gridSize').addEventListener('change', (e) => { state.gridSize = e.target.value; render(); });
+  $('gap').addEventListener('input', (e) => { state.gap = Number(e.target.value); $('gapValue').textContent = e.target.value; render(); });
+  $('titleInput').addEventListener('input', (e) => { state.title = e.target.value; render(); });
+  $('subInput').addEventListener('input', (e) => { state.sub = e.target.value; render(); });
+  $('downloadBtn').addEventListener('click', download);
+  $('shareBtn').addEventListener('click', share);
+  if (navigator.canShare && navigator.canShare({ files: [new File([''], 'x.png', { type: 'image/png' })] })) {
+    $('shareBtn').hidden = false;
+  }
+}
+
+(async function init() {
+  bindUI();
+  renderTemplates();
+  try { await document.fonts.load(`900 40px ${FONT}`); await document.fonts.load(`500 40px ${FONT}`); } catch {}
+  render();
+  try {
+    await handleCallback();
+    renderAuth();
+    if (store.get('token')) await loadUserAndPlaylists();
+  } catch (err) {
+    setStatus(err.message, true);
+  }
+})();
+</script>
+</body>
+</html>
