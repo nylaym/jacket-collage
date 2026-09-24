@@ -88,7 +88,7 @@
     margin-top: 10px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
   }
   .trow {
-    display: grid; grid-template-columns: 36px 1.6fr 1fr 1fr 100px 100px; gap: 10px; align-items: center;
+    display: grid; grid-template-columns: 36px 2fr 1.2fr 100px 100px; gap: 10px; align-items: center;
     width: 100%; text-align: left; padding: 7px 10px; border-radius: 6px;
     border: 1px solid transparent; background: none; cursor: grab; font: inherit; color: var(--ink);
   }
@@ -98,7 +98,13 @@
     background: none; border: none; padding: 0; text-align: left; cursor: pointer;
   }
   .trow.thead .csort:hover { color: var(--ink); }
-  .trow img { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; }
+  .trow img { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; display: block; }
+  .thumbWrap { position: relative; width: 32px; height: 32px; }
+  .trackBadge {
+    position: absolute; bottom: -4px; right: -4px; min-width: 15px; height: 15px; padding: 0 3px;
+    border-radius: 999px; border: none; background: var(--accent); color: var(--accent-ink);
+    font-size: 9px; font-weight: 700; line-height: 15px; cursor: pointer;
+  }
   .trow .ttitle, .trow .cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .trow .title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; }
   .trow .cell { font-size: 12px; color: var(--muted); }
@@ -197,6 +203,10 @@
       <input type="text" id="popoverSearch" placeholder="絞り込み" autocomplete="off">
       <div class="popoverList" id="popoverList"></div>
       <button type="button" class="ghost" id="popoverCloseBtn">閉じる</button>
+    </div>
+
+    <div class="popover" id="trackPopover" hidden>
+      <div class="popoverList" id="trackPopoverList"></div>
     </div>
   </section>
 
@@ -301,7 +311,7 @@ const state = {
   sub: '',
   me: null,
   playlists: [],
-  tiles: [], // { key, src, img, track, albumName, artist, addedAt, releaseDate, source, selected }
+  tiles: [], // { key, src, img, albumName, artist, addedAt, releaseDate, tracks, source, selected }
   palette: null,
   sortMode: 'default',
   sortDir: 'asc',
@@ -504,12 +514,13 @@ async function fetchArtists(ids) {
 }
 
 async function buildArtistTileSet(entries) {
-  const firstSeen = new Map(); // artistId -> { name, addedAt }
+  const firstSeen = new Map(); // artistId -> { name, addedAt, tracks: Set }
   for (const e of entries) {
     const it = e.item || e.track;
     if (!it) continue;
     for (const a of it.artists || []) {
-      if (!firstSeen.has(a.id)) firstSeen.set(a.id, { name: a.name, addedAt: e.added_at || '' });
+      if (!firstSeen.has(a.id)) firstSeen.set(a.id, { name: a.name, addedAt: e.added_at || '', tracks: new Set() });
+      if (it.name) firstSeen.get(a.id).tracks.add(it.name);
     }
   }
   const ids = [...firstSeen.keys()];
@@ -521,8 +532,9 @@ async function buildArtistTileSet(entries) {
     if (!img) continue;
     const meta = firstSeen.get(artist.id) || {};
     tiles.push({
-      key: 'artist:' + artist.id, src: img.url, track: '', albumName: '', artist: artist.name,
-      addedAt: meta.addedAt || '', releaseDate: '', source: 'spotify-artist', selected: true, img: null,
+      key: 'artist:' + artist.id, src: img.url, albumName: '', artist: artist.name,
+      addedAt: meta.addedAt || '', releaseDate: '', tracks: [...(meta.tracks || [])],
+      source: 'spotify-artist', selected: true, img: null,
     });
   }
   await loadImages(tiles);
@@ -555,23 +567,28 @@ async function loadPlaylist(id) {
   const pl = state.playlists.find(p => p.id === id);
   setStatus('曲を読み込み中…');
   const entries = await apiAll(`/playlists/${id}/items?limit=50&additional_types=track,episode`);
-  const seen = new Set();
-  const tiles = [];
+  const seen = new Map(); // key -> tile（同じジャケットの2曲目以降は tracks に曲名だけ足す）
   for (const e of entries) {
     const it = e.item || e.track; // 2026年2月の変更で item に。移行期間中は track も返る
     if (!it) continue;
     const album = it.album;
     const images = album?.images || it.images || it.show?.images || [];
     const key = album?.id || it.id || images[0]?.url;
-    if (!images.length || seen.has(key)) continue;
-    seen.add(key);
+    if (!images.length) continue;
+    if (seen.has(key)) {
+      const tile = seen.get(key);
+      if (it.name && !tile.tracks.includes(it.name)) tile.tracks.push(it.name);
+      continue;
+    }
     const artist = it.artists?.map(a => a.name).join(', ') || '';
-    tiles.push({
-      key, src: images[0].url, track: it.name || '', albumName: album?.name || '', artist,
+    seen.set(key, {
+      key, src: images[0].url, albumName: album?.name || it.name || '', artist,
       addedAt: e.added_at || '', releaseDate: album?.release_date || '',
+      tracks: it.name ? [it.name] : [],
       source: 'spotify', selected: true, img: null,
     });
   }
+  const tiles = [...seen.values()];
   if (!tiles.length) {
     setStatus('このプレイリストからはジャケットを取得できませんでした。曲が入っているか確認してください。', true);
     return;
@@ -888,9 +905,11 @@ async function loadDemo() {
     const artist = 'Artist ' + String.fromCharCode(65 + (i % 6));
     const addedAt = new Date(Date.now() - i * 86400000).toISOString();
     const releaseDate = `${2008 + (i % 16)}-${String((i % 12) + 1).padStart(2, '0')}-01`;
+    const trackCount = (i % 4) + 1;
+    const tracks = Array.from({ length: trackCount }, (_, k) => `Track ${i + 1}-${k + 1}`);
     tiles.push({
-      key: 'demo' + i, src: c.toDataURL(), track: 'Sample ' + (i + 1), albumName: 'Album ' + ((i % 5) + 1),
-      artist, addedAt, releaseDate, source: 'demo', selected: true, img: null,
+      key: 'demo' + i, src: c.toDataURL(), albumName: 'Album ' + ((i % 5) + 1),
+      artist, addedAt, releaseDate, tracks, source: 'demo', selected: true, img: null,
     });
   }
   await loadImages(tiles);
@@ -903,8 +922,9 @@ async function loadDemo() {
     x.fillStyle = `hsl(${h} 70% 75%)`; x.beginPath(); x.arc(150, 120, 70, 0, Math.PI * 2); x.fill();
     x.beginPath(); x.arc(150, 320, 130, 0, Math.PI * 2); x.fill();
     artistTiles.push({
-      key: 'demo-artist' + i, src: c.toDataURL(), track: '', albumName: '',
+      key: 'demo-artist' + i, src: c.toDataURL(), albumName: '',
       artist: 'Artist ' + String.fromCharCode(65 + i), addedAt: '', releaseDate: '',
+      tracks: [`Track ${i + 1}-1`, `Track ${i + 1}-2`],
       source: 'demo-artist', selected: true, img: null,
     });
   }
@@ -970,7 +990,6 @@ function applySort() {
   const collator = new Intl.Collator('ja');
   const dir = state.sortDir === 'desc' ? -1 : 1;
   const comparators = {
-    track: (a, b) => collator.compare(a.track || '', b.track || ''),
     artist: (a, b) => collator.compare(a.artist || '', b.artist || ''),
     albumName: (a, b) => collator.compare(a.albumName || '', b.albumName || ''),
     addedAt: (a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''),
@@ -1077,6 +1096,18 @@ function openFilterPopover(field, anchorEl) {
   pop.style.left = `${rect.left}px`;
 }
 
+function openTrackPopover(tile, anchorEl) {
+  const pop = $('trackPopover');
+  const listEl = $('trackPopoverList');
+  listEl.innerHTML = (tile.tracks || [])
+    .map(name => `<div class="popoverRow">${escapeHtml(name)}</div>`)
+    .join('') || '<div class="popoverRow">-</div>';
+  pop.hidden = false;
+  const rect = anchorEl.getBoundingClientRect();
+  pop.style.top = `${rect.bottom + 4}px`;
+  pop.style.left = `${rect.left}px`;
+}
+
 function renderThumbnails() {
   const container = $('thumbList');
   container.innerHTML = '';
@@ -1085,9 +1116,8 @@ function renderThumbnails() {
   header.className = 'trow thead';
   header.innerHTML = `
     <span></span>
-    <button type="button" class="csort" data-sort="track">タイトル</button>
-    <button type="button" class="csort" data-sort="artist">アーティスト</button>
     <button type="button" class="csort" data-sort="albumName">アルバム</button>
+    <button type="button" class="csort" data-sort="artist">アーティスト</button>
     <button type="button" class="csort" data-sort="addedAt">追加日</button>
     <button type="button" class="csort" data-sort="releaseDate">リリース日</button>
   `;
@@ -1100,19 +1130,29 @@ function renderThumbnails() {
 
   const visible = visibleTiles();
   for (const t of visible) {
-    const row = document.createElement('button');
-    row.type = 'button';
+    const row = document.createElement('div');
     row.className = 'trow' + (t.selected ? '' : ' off');
     row.draggable = true;
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    const badge = t.tracks && t.tracks.length > 1
+      ? `<button type="button" class="trackBadge" title="収録曲">${t.tracks.length}</button>` : '';
     row.innerHTML = `
-      <img src="${t.src}" alt="" loading="lazy">
-      <span class="ttitle"><span class="title">${escapeHtml(t.track || t.albumName)}</span></span>
+      <span class="thumbWrap"><img src="${t.src}" alt="" loading="lazy">${badge}</span>
+      <span class="ttitle"><span class="title">${escapeHtml(t.albumName)}</span></span>
       <span class="cell">${escapeHtml(t.artist)}</span>
-      <span class="cell">${escapeHtml(t.albumName)}</span>
       <span class="cell">${escapeHtml((t.addedAt || '').slice(0, 10))}</span>
       <span class="cell">${escapeHtml(t.releaseDate)}</span>
     `;
-    row.addEventListener('click', () => { t.selected = !t.selected; renderThumbnails(); render(); });
+    const toggle = () => { t.selected = !t.selected; renderThumbnails(); render(); };
+    row.addEventListener('click', toggle);
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+    const badgeEl = row.querySelector('.trackBadge');
+    if (badgeEl) {
+      badgeEl.addEventListener('click', (e) => { e.stopPropagation(); openTrackPopover(t, badgeEl); });
+    }
     row.addEventListener('dragstart', () => { dragKey = t.key; row.classList.add('dragging'); });
     row.addEventListener('dragend', () => { row.classList.remove('dragging'); dragKey = null; });
     row.addEventListener('dragover', (e) => e.preventDefault());
@@ -1249,8 +1289,9 @@ function bindUI() {
   $('popoverCloseBtn').addEventListener('click', closePopover);
   document.addEventListener('click', (e) => {
     const pop = $('filterPopover');
-    if (pop.hidden || pop.contains(e.target) || e.target.closest('.chip[data-field]')) return;
-    closePopover();
+    if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('.chip[data-field]')) closePopover();
+    const trackPop = $('trackPopover');
+    if (!trackPop.hidden && !trackPop.contains(e.target) && !e.target.closest('.trackBadge')) trackPop.hidden = true;
   });
   $('clearFilterBtn').addEventListener('click', () => {
     for (const field of Object.keys(state.fieldFilters)) state.fieldFilters[field].clear();
