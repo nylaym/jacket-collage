@@ -68,23 +68,46 @@
   .status.error { color: var(--danger); }
   .check { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 14px; margin-bottom: 0; }
   .check input { width: auto; margin: 0; accent-color: var(--accent); }
-  .thumbs {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 6px;
-    max-height: 320px; overflow-y: auto; padding: 6px; margin-top: 10px;
-    border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  .chip {
+    font: inherit; font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer;
   }
-  .thumb {
-    position: relative; aspect-ratio: 1 / 1; border-radius: 6px; overflow: hidden;
-    cursor: grab; border: 2px solid transparent; padding: 0; background: none;
+  .chip.active { border-color: var(--accent); color: var(--accent); }
+  .tracktable {
+    display: flex; flex-direction: column; max-height: 400px; overflow: auto;
+    margin-top: 10px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
   }
-  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .thumb.off img { opacity: .3; filter: grayscale(1); }
-  .thumb.off::after {
-    content: "非表示"; position: absolute; inset: 0; display: flex; align-items: center;
-    justify-content: center; font-size: 10px; color: #fff; background: rgba(0, 0, 0, .35);
+  .trow {
+    display: grid; grid-template-columns: 32px 1.5fr 1fr 70px 70px; gap: 10px; align-items: center;
+    min-width: 460px; width: 100%; text-align: left; padding: 6px 8px; border-radius: 6px;
+    border: 1px solid transparent; background: none; cursor: grab; font: inherit; color: var(--ink);
   }
-  .thumb.dragging { opacity: .4; }
-  .thumb:hover, .thumb:focus-visible { border-color: var(--accent); }
+  .trow.thead { cursor: default; padding: 4px 8px 6px; border-bottom: 1px solid var(--line); border-radius: 0; }
+  .trow.thead .csort {
+    font: inherit; font-size: 11px; font-weight: 700; color: var(--muted);
+    background: none; border: none; padding: 0; text-align: left; cursor: pointer;
+  }
+  .trow.thead .csort:hover { color: var(--ink); }
+  .trow img { width: 28px; height: 28px; border-radius: 4px; object-fit: cover; }
+  .trow .ttitle, .trow .cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trow .title, .trow .sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trow .title { font-size: 13px; font-weight: 700; }
+  .trow .sub { font-size: 11px; color: var(--muted); }
+  .trow .cell { font-size: 12px; color: var(--muted); }
+  .trow.off { opacity: .4; }
+  .trow.off img { filter: grayscale(1); }
+  .trow.dragging { opacity: .3; }
+  .trow:not(.thead):hover, .trow:not(.thead):focus-visible { border-color: var(--accent); }
+  .popover {
+    position: fixed; z-index: 20; width: 220px; max-height: 280px; overflow-y: auto;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px;
+    box-shadow: 0 12px 24px -12px rgba(20, 24, 40, .4);
+  }
+  .popover input[type=text] { margin-top: 0; }
+  .popoverList { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; max-height: 180px; overflow-y: auto; }
+  .popoverRow { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+  .popoverRow:hover { background: var(--paper); }
+  .popoverRow input { width: auto; margin: 0; accent-color: var(--accent); }
   .stage { position: sticky; top: 20px; }
   .sleeve {
     width: 100%; max-width: 720px; aspect-ratio: 1 / 1; background: var(--surface);
@@ -133,19 +156,28 @@
 
     <div class="step">
       <h2>ジャケット</h2>
-      <label>並び順
-        <select id="sortSelect">
-          <option value="default">取得順</option>
-          <option value="artist">アーティスト順</option>
-          <option value="album">アルバム順</option>
-        </select>
-      </label>
+      <div class="row">
+        <button type="button" class="chip" id="chipArtist" data-field="artist">アーティスト</button>
+        <button type="button" class="chip" id="chipAlbum" data-field="albumName">アルバム</button>
+        <button type="button" class="chip" id="chipAdded" data-field="addedAt">追加日</button>
+        <button type="button" class="ghost" id="clearFilterBtn">絞り込み解除</button>
+      </div>
+      <div class="row">
+        <button id="applyShowBtn" class="ghost" type="button">絞り込みを表示</button>
+        <button id="applyHideBtn" class="ghost" type="button">絞り込みを非表示</button>
+      </div>
       <div class="row">
         <button id="selectAllBtn" class="ghost" type="button">すべて表示</button>
         <button id="selectNoneBtn" class="ghost" type="button">すべて非表示</button>
       </div>
-      <div class="thumbs" id="thumbList" aria-label="ジャケット一覧"></div>
+      <div class="tracktable" id="thumbList" role="table" aria-label="ジャケット一覧"></div>
       <p class="status" id="thumbCount"></p>
+    </div>
+
+    <div class="popover" id="filterPopover" hidden>
+      <input type="text" id="popoverSearch" placeholder="絞り込み" autocomplete="off">
+      <div class="popoverList" id="popoverList"></div>
+      <button type="button" class="ghost" id="popoverCloseBtn">閉じる</button>
     </div>
 
     <div class="step">
@@ -161,6 +193,12 @@
         </select>
       </label>
       <label class="check"><input type="checkbox" id="brickMode"> レンガ状敷き詰め</label>
+      <label>並べ方向
+        <select id="fillDirection">
+          <option value="row">横</option>
+          <option value="col">縦</option>
+        </select>
+      </label>
       <label>すき間 <span id="gapValue">0</span>px
         <input type="range" id="gap" min="0" max="24" step="2" value="0">
       </label>
@@ -213,11 +251,20 @@ const state = {
   sub: '',
   me: null,
   playlists: [],
-  tiles: [], // { key, src, img, label, artist, source: 'spotify' | 'custom' | 'demo', selected: true }
+  tiles: [], // { key, src, img, track, albumName, artist, addedAt, releaseDate, source, selected }
   palette: null,
   sortMode: 'default',
+  sortDir: 'asc',
   layoutMode: 'grid', // 'grid' | 'brick'
-  originalOrder: [], // 読み込み直後の tile.key 順（「Spotifyの順番」への復元用）
+  fillDirection: 'row', // 'row' | 'col'（gridレイアウトのタイル埋め込み順）
+  fieldFilters: { artist: new Set(), albumName: new Set(), addedAt: new Set() },
+  originalOrder: [], // 読み込み直後の tile.key 順（「取得順」への復元用）
+};
+
+const FIELD_DEFS = {
+  artist: { label: 'アーティスト', get: (t) => t.artist || '(不明)' },
+  albumName: { label: 'アルバム', get: (t) => t.albumName || '(不明)' },
+  addedAt: { label: '追加日', get: (t) => (t.addedAt || '').slice(0, 10) || '(不明)' },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -376,7 +423,11 @@ async function loadPlaylist(id) {
     if (!images.length || seen.has(key)) continue;
     seen.add(key);
     const artist = it.artists?.map(a => a.name).join(', ') || '';
-    tiles.push({ key, src: images[0].url, label: album?.name || it.name, artist, source: 'spotify', selected: true, img: null });
+    tiles.push({
+      key, src: images[0].url, track: it.name || '', albumName: album?.name || '', artist,
+      addedAt: e.added_at || '', releaseDate: album?.release_date || '',
+      source: 'spotify', selected: true, img: null,
+    });
   }
   if (!tiles.length) {
     setStatus('このプレイリストからはジャケットを取得できませんでした。曲が入っているか確認してください。', true);
@@ -452,15 +503,15 @@ function drawCover(img, x, y, w, h) {
   ctx.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, x, y, w, h);
 }
 
-function drawGrid(imgs, x, y, w, h, cols, gap) {
+function drawGrid(imgs, x, y, w, h, cols, gap, direction) {
   const cell = (w - gap * (cols - 1)) / cols;
   const rows = Math.max(1, Math.floor((h + gap) / (cell + gap)));
   const usedH = rows * cell + (rows - 1) * gap;
   const oy = y + (h - usedH) / 2;
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const img = imgs[(r * cols + c) % imgs.length];
-      drawCover(img, x + c * (cell + gap), oy + r * (cell + gap), cell, cell);
+      const idx = direction === 'col' ? c * rows + r : r * cols + c;
+      drawCover(imgs[idx % imgs.length], x + c * (cell + gap), oy + r * (cell + gap), cell, cell);
     }
   }
 }
@@ -492,9 +543,9 @@ function drawBrick(imgs, x, y, w, h, gap) {
   }
 }
 
-function drawTiles(imgs, x, y, w, h, cols, gap, mode) {
+function drawTiles(imgs, x, y, w, h, cols, gap, mode, direction) {
   if (mode === 'brick') drawBrick(imgs, x, y, w, h, gap);
-  else drawGrid(imgs, x, y, w, h, cols, gap);
+  else drawGrid(imgs, x, y, w, h, cols, gap, direction);
 }
 
 function fitText(text, maxW, weight, size, minSize = size * 0.6) {
@@ -537,7 +588,7 @@ const TEMPLATES = [
     render(W, H, t) {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
-      drawTiles(t.imgs, 0, 0, W, H, t.n, t.gap, t.layout);
+      drawTiles(t.imgs, 0, 0, W, H, t.n, t.gap, t.layout, t.direction);
     },
   },
   {
@@ -549,7 +600,7 @@ const TEMPLATES = [
       const pad = W * 0.07, bandH = H * 0.17;
       const S = H - pad - bandH;
       const x = (W - S) / 2;
-      drawTiles(t.imgs, x, pad, S, S, t.n, t.gap, t.layout);
+      drawTiles(t.imgs, x, pad, S, S, t.n, t.gap, t.layout, t.direction);
       const ty = pad + S + bandH * 0.42;
       ctx.fillStyle = fg; ctx.textBaseline = 'alphabetic';
       ctx.fillText(fitText(t.title, S * 0.78, 900, W * 0.052), x, ty);
@@ -577,7 +628,7 @@ const TEMPLATES = [
       ctx.fillText(fitText(t.sub, W - pad * 2, 500, W * 0.028), pad, titleBottom + W * 0.012);
       ctx.globalAlpha = 1;
       const gy = titleBottom + W * 0.075;
-      drawTiles(t.imgs, pad, gy, W - pad * 2, H - gy - pad, t.n + 1, Math.max(t.gap, 6), t.layout);
+      drawTiles(t.imgs, pad, gy, W - pad * 2, H - gy - pad, t.n + 1, Math.max(t.gap, 6), t.layout, t.direction);
       ctx.textBaseline = 'alphabetic';
     },
   },
@@ -601,7 +652,7 @@ function render() {
   tpl.render(W, H, {
     imgs, n, gap: state.gap * (W / 1080),
     title: state.title || 'Untitled', sub: state.sub, palette: state.palette || { base: [40, 44, 60] },
-    layout: state.layoutMode,
+    layout: state.layoutMode, direction: state.fillDirection,
   });
   ctx.restore();
   if (state.layoutMode === 'brick') {
@@ -672,7 +723,12 @@ async function loadDemo() {
     else if (i % 3 === 1) { x.fillRect(40, 190, 220, 30); x.fillRect(40, 235, 140, 18); }
     else { x.beginPath(); x.moveTo(40, 260); x.lineTo(150, 40); x.lineTo(260, 260); x.closePath(); x.fill(); }
     const artist = 'Artist ' + String.fromCharCode(65 + (i % 6));
-    tiles.push({ key: 'demo' + i, src: c.toDataURL(), label: 'Sample ' + (i + 1), artist, source: 'demo', selected: true, img: null });
+    const addedAt = new Date(Date.now() - i * 86400000).toISOString();
+    const releaseDate = `${2008 + (i % 16)}-${String((i % 12) + 1).padStart(2, '0')}-01`;
+    tiles.push({
+      key: 'demo' + i, src: c.toDataURL(), track: 'Sample ' + (i + 1), albumName: 'Album ' + ((i % 5) + 1),
+      artist, addedAt, releaseDate, source: 'demo', selected: true, img: null,
+    });
   }
   await loadImages(tiles);
   state.tiles = tiles;
@@ -716,39 +772,143 @@ function populateGridSizeOptions() {
 
 function resetSortAndLayout() {
   state.sortMode = 'default';
+  state.sortDir = 'asc';
   state.layoutMode = 'grid';
-  $('sortSelect').value = 'default';
+  state.fillDirection = 'row';
+  state.fieldFilters = { artist: new Set(), albumName: new Set(), addedAt: new Set() };
   $('brickMode').checked = false;
   $('gridSize').disabled = false;
+  $('fillDirection').value = 'row';
+  closePopover();
+  updateFilterChipsState();
 }
 
 function applySort() {
   const collator = new Intl.Collator('ja');
-  if (state.sortMode === 'artist') {
-    state.tiles.sort((a, b) => collator.compare(a.artist || '', b.artist || ''));
-  } else if (state.sortMode === 'album') {
-    state.tiles.sort((a, b) => collator.compare(a.label || '', b.label || ''));
+  const dir = state.sortDir === 'desc' ? -1 : 1;
+  const comparators = {
+    track: (a, b) => collator.compare(a.track || '', b.track || ''),
+    albumName: (a, b) => collator.compare(a.albumName || '', b.albumName || ''),
+    addedAt: (a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''),
+    releaseDate: (a, b) => (a.releaseDate || '').localeCompare(b.releaseDate || ''),
+    default: (a, b) => state.originalOrder.indexOf(a.key) - state.originalOrder.indexOf(b.key),
+  };
+  const cmp = comparators[state.sortMode] || comparators.default;
+  state.tiles.sort((a, b) => dir * cmp(a, b));
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function matchesFilters(t) {
+  for (const field of Object.keys(state.fieldFilters)) {
+    const set = state.fieldFilters[field];
+    if (set.size && !set.has(FIELD_DEFS[field].get(t))) return false;
+  }
+  return true;
+}
+
+function visibleTiles() {
+  return state.tiles.filter(matchesFilters);
+}
+
+function onHeaderClick(field) {
+  if (state.sortMode === field) {
+    state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
   } else {
-    const order = state.originalOrder;
-    state.tiles.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+    state.sortMode = field;
+    state.sortDir = 'asc';
+  }
+  applySort();
+  renderThumbnails();
+  render();
+}
+
+function updateFilterChipsState() {
+  document.querySelectorAll('.chip[data-field]').forEach((btn) => {
+    const field = btn.dataset.field;
+    const n = state.fieldFilters[field].size;
+    btn.classList.toggle('active', n > 0);
+    btn.textContent = n > 0 ? `${FIELD_DEFS[field].label}（${n}）` : FIELD_DEFS[field].label;
+  });
+}
+
+function closePopover() {
+  $('filterPopover').hidden = true;
+}
+
+function renderPopoverList(field, query) {
+  const def = FIELD_DEFS[field];
+  const values = [...new Set(state.tiles.map(def.get))].sort((a, b) => new Intl.Collator('ja').compare(a, b));
+  const q = query.trim().toLowerCase();
+  const listEl = $('popoverList');
+  listEl.innerHTML = '';
+  for (const v of values) {
+    if (q && !v.toLowerCase().includes(q)) continue;
+    const row = document.createElement('label');
+    row.className = 'popoverRow';
+    const checked = state.fieldFilters[field].has(v);
+    row.innerHTML = `<input type="checkbox" ${checked ? 'checked' : ''}><span>${escapeHtml(v)}</span>`;
+    row.querySelector('input').addEventListener('change', (e) => {
+      if (e.target.checked) state.fieldFilters[field].add(v);
+      else state.fieldFilters[field].delete(v);
+      updateFilterChipsState();
+      renderThumbnails();
+    });
+    listEl.appendChild(row);
   }
 }
 
+function openFilterPopover(field, anchorEl) {
+  const pop = $('filterPopover');
+  pop.dataset.field = field;
+  $('popoverSearch').value = '';
+  renderPopoverList(field, '');
+  pop.hidden = false;
+  const rect = anchorEl.getBoundingClientRect();
+  pop.style.top = `${rect.bottom + 4}px`;
+  pop.style.left = `${rect.left}px`;
+}
+
 function renderThumbnails() {
-  const list = $('thumbList');
-  list.innerHTML = '';
-  for (const t of state.tiles) {
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.className = 'thumb' + (t.selected ? '' : ' off');
-    el.draggable = true;
-    el.title = [t.label, t.artist].filter(Boolean).join(' / ');
-    el.innerHTML = `<img src="${t.src}" alt="${t.label || ''}" loading="lazy">`;
-    el.addEventListener('click', () => { t.selected = !t.selected; renderThumbnails(); render(); });
-    el.addEventListener('dragstart', () => { dragKey = t.key; el.classList.add('dragging'); });
-    el.addEventListener('dragend', () => { el.classList.remove('dragging'); dragKey = null; });
-    el.addEventListener('dragover', (e) => e.preventDefault());
-    el.addEventListener('drop', (e) => {
+  const container = $('thumbList');
+  container.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'trow thead';
+  header.innerHTML = `
+    <span></span>
+    <button type="button" class="csort" data-sort="track">タイトル</button>
+    <button type="button" class="csort" data-sort="albumName">アルバム</button>
+    <button type="button" class="csort" data-sort="addedAt">追加日</button>
+    <button type="button" class="csort" data-sort="releaseDate">リリース日</button>
+  `;
+  header.querySelectorAll('.csort').forEach((btn) => {
+    const field = btn.dataset.sort;
+    if (state.sortMode === field) btn.textContent += state.sortDir === 'asc' ? ' ▲' : ' ▼';
+    btn.addEventListener('click', () => onHeaderClick(field));
+  });
+  container.appendChild(header);
+
+  const visible = visibleTiles();
+  for (const t of visible) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'trow' + (t.selected ? '' : ' off');
+    row.draggable = true;
+    row.innerHTML = `
+      <img src="${t.src}" alt="" loading="lazy">
+      <span class="ttitle"><span class="title">${escapeHtml(t.track || t.albumName)}</span><span class="sub">${escapeHtml(t.artist)}</span></span>
+      <span class="cell">${escapeHtml(t.albumName)}</span>
+      <span class="cell">${escapeHtml((t.addedAt || '').slice(0, 10))}</span>
+      <span class="cell">${escapeHtml(t.releaseDate)}</span>
+    `;
+    row.addEventListener('click', () => { t.selected = !t.selected; renderThumbnails(); render(); });
+    row.addEventListener('dragstart', () => { dragKey = t.key; row.classList.add('dragging'); });
+    row.addEventListener('dragend', () => { row.classList.remove('dragging'); dragKey = null; });
+    row.addEventListener('dragover', (e) => e.preventDefault());
+    row.addEventListener('drop', (e) => {
       e.preventDefault();
       if (!dragKey || dragKey === t.key) return;
       const from = state.tiles.findIndex(x => x.key === dragKey);
@@ -759,10 +919,13 @@ function renderThumbnails() {
       renderThumbnails();
       render();
     });
-    list.appendChild(el);
+    container.appendChild(row);
   }
+
   const shown = state.tiles.filter(t => t.selected).length;
-  $('thumbCount').textContent = state.tiles.length ? `${shown} / ${state.tiles.length}枚` : '';
+  $('thumbCount').textContent = state.tiles.length
+    ? `${shown} / ${state.tiles.length}枚${visible.length !== state.tiles.length ? `（絞り込み ${visible.length}件）` : ''}`
+    : '';
 }
 
 function renderTemplates() {
@@ -794,12 +957,29 @@ function bindUI() {
     $('gridSize').disabled = e.target.checked;
     render();
   });
-  $('sortSelect').addEventListener('change', (e) => {
-    state.sortMode = e.target.value;
-    applySort();
-    renderThumbnails();
-    render();
+  $('fillDirection').addEventListener('change', (e) => { state.fillDirection = e.target.value; render(); });
+  document.querySelectorAll('.chip[data-field]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const field = btn.dataset.field;
+      const pop = $('filterPopover');
+      if (!pop.hidden && pop.dataset.field === field) { closePopover(); return; }
+      openFilterPopover(field, btn);
+    });
   });
+  $('popoverSearch').addEventListener('input', (e) => renderPopoverList($('filterPopover').dataset.field, e.target.value));
+  $('popoverCloseBtn').addEventListener('click', closePopover);
+  document.addEventListener('click', (e) => {
+    const pop = $('filterPopover');
+    if (pop.hidden || pop.contains(e.target) || e.target.closest('.chip[data-field]')) return;
+    closePopover();
+  });
+  $('clearFilterBtn').addEventListener('click', () => {
+    for (const field of Object.keys(state.fieldFilters)) state.fieldFilters[field].clear();
+    updateFilterChipsState();
+    renderThumbnails();
+  });
+  $('applyShowBtn').addEventListener('click', () => { visibleTiles().forEach(t => t.selected = true); renderThumbnails(); render(); });
+  $('applyHideBtn').addEventListener('click', () => { visibleTiles().forEach(t => t.selected = false); renderThumbnails(); render(); });
   $('selectAllBtn').addEventListener('click', () => { state.tiles.forEach(t => t.selected = true); renderThumbnails(); render(); });
   $('selectNoneBtn').addEventListener('click', () => { state.tiles.forEach(t => t.selected = false); renderThumbnails(); render(); });
   $('titleInput').addEventListener('input', (e) => { state.title = e.target.value; render(); });
