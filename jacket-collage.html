@@ -88,7 +88,7 @@
     margin-top: 10px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
   }
   .trow {
-    display: grid; grid-template-columns: 36px 2fr 1.2fr 110px 110px; gap: 12px; align-items: center;
+    display: grid; grid-template-columns: 36px 1.6fr 1fr 1fr 100px 100px; gap: 10px; align-items: center;
     width: 100%; text-align: left; padding: 7px 10px; border-radius: 6px;
     border: 1px solid transparent; background: none; cursor: grab; font: inherit; color: var(--ink);
   }
@@ -100,13 +100,11 @@
   .trow.thead .csort:hover { color: var(--ink); }
   .trow img { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; }
   .trow .ttitle, .trow .cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .trow .title, .trow .sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .trow .title { font-size: 13px; font-weight: 700; }
-  .trow .sub { font-size: 11px; color: var(--muted); }
+  .trow .title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; }
   .trow .cell { font-size: 12px; color: var(--muted); }
   .trow.off { background: var(--paper); }
   .trow.off img { filter: grayscale(1); opacity: .5; }
-  .trow.off .title, .trow.off .sub, .trow.off .cell { color: var(--muted); text-decoration: line-through; }
+  .trow.off .title, .trow.off .cell { color: var(--muted); text-decoration: line-through; }
   .trow.dragging { opacity: .3; }
   .trow:not(.thead):hover, .trow:not(.thead):focus-visible { border-color: var(--accent); }
   .popover {
@@ -182,6 +180,7 @@
         <span class="sep"></span>
         <button id="selectAllBtn" class="ghost" type="button">すべて表示</button>
         <button id="selectNoneBtn" class="ghost" type="button">すべて非表示</button>
+        <button id="dedupeBtn" class="ghost" type="button">重複アルバムを非表示</button>
       </div>
       <div class="tracktable" id="thumbList" role="table" aria-label="ジャケット一覧"></div>
       <p class="status" id="thumbCount"></p>
@@ -673,7 +672,7 @@ const TEMPLATES = [
  * レンダリング
  * ========================================================= */
 function autoGrid(count) {
-  return Math.min(16, Math.max(2, Math.floor(Math.sqrt(count))));
+  return Math.min(32, Math.max(2, Math.floor(Math.sqrt(count))));
 }
 
 function render() {
@@ -799,7 +798,7 @@ function renderAuth() {
 
 function populateGridSizeOptions() {
   const sel = $('gridSize');
-  for (let i = 2; i <= 16; i++) {
+  for (let i = 2; i <= 32; i++) {
     const opt = document.createElement('option');
     opt.value = String(i);
     opt.textContent = `${i} × ${i}`;
@@ -825,6 +824,7 @@ function applySort() {
   const dir = state.sortDir === 'desc' ? -1 : 1;
   const comparators = {
     track: (a, b) => collator.compare(a.track || '', b.track || ''),
+    artist: (a, b) => collator.compare(a.artist || '', b.artist || ''),
     albumName: (a, b) => collator.compare(a.albumName || '', b.albumName || ''),
     addedAt: (a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''),
     releaseDate: (a, b) => (a.releaseDate || '').localeCompare(b.releaseDate || ''),
@@ -856,6 +856,18 @@ function applyRandomSelection(n) {
   const shuffled = [...pool].sort(() => Math.random() - 0.5);
   const chosen = new Set(shuffled.slice(0, count).map(t => t.key));
   pool.forEach(t => { t.selected = chosen.has(t.key); });
+  renderThumbnails();
+  render();
+}
+
+function hideDuplicateAlbums() {
+  const seen = new Set();
+  for (const t of state.tiles) {
+    const key = (t.albumName || '').trim().toLowerCase();
+    if (!key) continue;
+    if (seen.has(key)) t.selected = false;
+    else seen.add(key);
+  }
   renderThumbnails();
   render();
 }
@@ -927,6 +939,7 @@ function renderThumbnails() {
   header.innerHTML = `
     <span></span>
     <button type="button" class="csort" data-sort="track">タイトル</button>
+    <button type="button" class="csort" data-sort="artist">アーティスト</button>
     <button type="button" class="csort" data-sort="albumName">アルバム</button>
     <button type="button" class="csort" data-sort="addedAt">追加日</button>
     <button type="button" class="csort" data-sort="releaseDate">リリース日</button>
@@ -946,7 +959,8 @@ function renderThumbnails() {
     row.draggable = true;
     row.innerHTML = `
       <img src="${t.src}" alt="" loading="lazy">
-      <span class="ttitle"><span class="title">${escapeHtml(t.track || t.albumName)}</span><span class="sub">${escapeHtml(t.artist)}</span></span>
+      <span class="ttitle"><span class="title">${escapeHtml(t.track || t.albumName)}</span></span>
+      <span class="cell">${escapeHtml(t.artist)}</span>
       <span class="cell">${escapeHtml(t.albumName)}</span>
       <span class="cell">${escapeHtml((t.addedAt || '').slice(0, 10))}</span>
       <span class="cell">${escapeHtml(t.releaseDate)}</span>
@@ -1030,6 +1044,7 @@ function bindUI() {
   $('randomBtn').addEventListener('click', () => applyRandomSelection(Number($('randomCount').value) || 0));
   $('selectAllBtn').addEventListener('click', () => { state.tiles.forEach(t => t.selected = true); renderThumbnails(); render(); });
   $('selectNoneBtn').addEventListener('click', () => { state.tiles.forEach(t => t.selected = false); renderThumbnails(); render(); });
+  $('dedupeBtn').addEventListener('click', hideDuplicateAlbums);
   $('toDesignBtn').addEventListener('click', () => showStep('design'));
   $('backToSelectBtn').addEventListener('click', () => showStep('select'));
   $('titleInput').addEventListener('input', (e) => { state.title = e.target.value; render(); });
